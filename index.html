@@ -1,0 +1,141 @@
+<!DOCTYPE html>
+<html lang="pl">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Transkrypcja Cleaner + MP3</title>
+  <script src="https://unpkg.com/mammoth/mammoth.browser.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/docx@7.8.0/build/index.umd.js"></script>
+  <style>
+    body { font-family: Arial, sans-serif; margin: 2rem; }
+    #panesWrapper { display: flex; }
+    .pane { flex: 1; border: 1px solid #ccc; padding: 1rem; white-space: pre-wrap; background: #f9f9f9; max-height: 70vh; overflow-y: auto; }
+    button { padding: 0.5rem 1rem; margin-top: 1rem; }
+    #progressBarWrapper { width: 100%; background: #eee; height: 1rem; border-radius: 0.5rem; overflow: hidden; margin-top: 1rem; display: none; }
+    #progressBar { height: 100%; width: 0%; background: #4caf50; transition: width 0.3s; }
+    #apiKeyInput { width: 100%; padding: 0.5rem; margin-top: 1rem; font-size: 1rem; }
+  </style>
+</head>
+<body>
+  <h1>Transkrypcja Cleaner + MP3</h1>
+  <input type="text" id="apiKeyInput" placeholder="Wklej tutaj swój OpenAI API Key..." />
+  <input type="file" id="fileInput" accept=".docx,.mp3" />
+  <button id="processBtn" disabled>Przetwórz transkrypcję</button>
+  <button id="downloadBtn" style="display:none;">Pobierz jako DOCX</button>
+  <div id="progressBarWrapper"><div id="progressBar"></div></div>
+
+  <div id="panesWrapper">
+    <div style="width: 100%">
+      <h3>Poprawiona transkrypcja (kopiuj ⌘+C / Ctrl+C)</h3>
+      <div id="correctedPane" class="pane" contenteditable="true"></div>
+    </div>
+  </div>
+
+  <script>
+    const fileInput = document.getElementById('fileInput');
+    const processBtn = document.getElementById('processBtn');
+    const downloadBtn = document.getElementById('downloadBtn');
+    const correctedPane = document.getElementById('correctedPane');
+    const progressBarWrapper = document.getElementById('progressBarWrapper');
+    const progressBar = document.getElementById('progressBar');
+    const apiKeyInput = document.getElementById('apiKeyInput');
+
+    let fullText = '';
+    let result = '';
+    let originalFilename = 'transkrypcja';
+
+    function getApiKey() {
+      const key = apiKeyInput.value.trim();
+      if (!key.startsWith('sk-')) {
+        alert('Wprowadź poprawny OpenAI API key (zaczynający się od sk-)');
+        throw new Error('Niepoprawny API key');
+      }
+      return key;
+    }
+
+    fileInput.addEventListener('change', async () => {
+      const file = fileInput.files[0];
+      if (!file) return;
+
+      if (file.size > 25 * 1024 * 1024) {
+        correctedPane.textContent = 'Plik MP3 przekracza limit 25 MB i nie może być przetworzony.';
+        return;
+      }
+
+      originalFilename = file.name.replace(/\.(docx|mp3)$/, '');
+      correctedPane.textContent = 'Wczytywanie pliku...';
+
+      if (file.name.endsWith('.docx')) {
+        try {
+          const arrayBuffer = await file.arrayBuffer();
+          const { value } = await mammoth.extractRawText({ arrayBuffer });
+          fullText = value;
+          correctedPane.textContent = 'Plik załadowany. Kliknij "Przetwórz transkrypcję".';
+          processBtn.disabled = false;
+        } catch (err) {
+          console.error(err);
+          correctedPane.textContent = 'Błąd podczas wczytywania pliku DOCX.';
+        }
+      } else if (file.name.endsWith('.mp3')) {
+        correctedPane.textContent = 'Wysyłanie pliku MP3 do transkrypcji...';
+        progressBarWrapper.style.display = 'block';
+        progressBar.style.width = '0%';
+
+        const formData = new FormData();
+        formData.append('file', file);
+        formData.append('model', 'whisper-1');
+
+        try {
+          const xhr = new XMLHttpRequest();
+          xhr.open('POST', 'https://api.openai.com/v1/audio/transcriptions');
+          xhr.setRequestHeader('Authorization', `Bearer ${getApiKey()}`);
+
+          xhr.upload.onprogress = (event) => {
+            if (event.lengthComputable) {
+              const percent = (event.loaded / event.total) * 100;
+              progressBar.style.width = `${percent}%`;
+              correctedPane.textContent = `Wysyłanie: ${Math.round(percent)}%`;
+            }
+          };
+
+          xhr.onload = () => {
+            progressBarWrapper.style.display = 'none';
+            try {
+              const data = JSON.parse(xhr.responseText);
+              if (xhr.status === 200) {
+                if (data.text) {
+                  fullText = data.text;
+                  correctedPane.textContent = 'Transkrypcja zakończona. Kliknij "Przetwórz transkrypcję".';
+                  processBtn.disabled = false;
+                } else {
+                  correctedPane.textContent = 'Błąd: odpowiedź API nie zawiera transkrypcji.';
+                }
+              } else {
+                correctedPane.textContent = `Błąd ${xhr.status}: ${data.error?.message || xhr.statusText}`;
+              }
+            } catch (parseErr) {
+              correctedPane.textContent = `Błąd ${xhr.status}: ${xhr.statusText}`;
+              console.error('Nie można sparsować odpowiedzi JSON:', parseErr);
+            }
+          };
+
+          xhr.onerror = () => {
+            progressBarWrapper.style.display = 'none';
+            correctedPane.textContent = 'Błąd połączenia z API. Sprawdź konsolę.';
+            console.error(xhr);
+          };
+
+          console.log('Wysyłam dane do OpenAI...', formData.get('file'), formData.get('model'));
+          xhr.send(formData);
+          console.log('Wysłano żądanie.');
+        } catch (err) {
+          console.error(err);
+          correctedPane.textContent = 'Błąd podczas wysyłania MP3. Szczegóły w konsoli.';
+        }
+      } else {
+        correctedPane.textContent = 'Nieobsługiwany typ pliku. Załaduj .docx lub .mp3';
+      }
+    });
+  </script>
+</body>
+</html>

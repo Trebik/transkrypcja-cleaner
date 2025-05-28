@@ -100,29 +100,26 @@
 
           xhr.onload = () => {
             progressBarWrapper.style.display = 'none';
+            console.log('Odpowiedź serwera:', xhr.status, xhr.responseText);
             try {
               const data = JSON.parse(xhr.responseText);
-              if (xhr.status === 200) {
-                if (data.text) {
-                  fullText = data.text;
-                  correctedPane.textContent = 'Transkrypcja zakończona. Kliknij "Przetwórz transkrypcję".';
-                  processBtn.disabled = false;
-                } else {
-                  correctedPane.textContent = 'Błąd: odpowiedź API nie zawiera transkrypcji.';
-                }
+              if (xhr.status === 200 && data.text) {
+                fullText = data.text;
+                correctedPane.textContent = 'Transkrypcja zakończona. Kliknij "Przetwórz transkrypcję".';
+                processBtn.disabled = false;
               } else {
                 correctedPane.textContent = `Błąd ${xhr.status}: ${data.error?.message || xhr.statusText}`;
               }
             } catch (parseErr) {
-              correctedPane.textContent = `Błąd ${xhr.status}: ${xhr.statusText}`;
-              console.error('Nie można sparsować odpowiedzi JSON:', parseErr);
+              correctedPane.textContent = `Błąd ${xhr.status}: Nie można sparsować odpowiedzi.`;
+              console.error('Błąd parsowania JSON:', parseErr);
             }
           };
 
           xhr.onerror = () => {
             progressBarWrapper.style.display = 'none';
-            correctedPane.textContent = 'Błąd połączenia z API. Sprawdź konsolę.';
-            console.error(xhr);
+            correctedPane.textContent = `Błąd połączenia: ${xhr.status} - ${xhr.statusText}`;
+            console.error('Błąd wysyłania:', xhr.responseText, xhr);
           };
 
           console.log('Wysyłam dane do OpenAI...', formData.get('file'), formData.get('model'));
